@@ -5,7 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, START, END
 
-# Securely load API Key (assumes environment variable is set on host machine)
+# Securely load API Key
 api_key = os.getenv('GOOGLE_API_KEY')
 if not api_key:
     print("Warning: GOOGLE_API_KEY environment variable not found.")
@@ -23,6 +23,20 @@ class State(TypedDict):
     skill_match: str
     response: str
 
+# Helper function to clean text from complex model outputs
+def clean_model_output(value):
+    if not value:
+        return ""
+    if isinstance(value, list):
+        extracted = []
+        for part in value:
+            if isinstance(part, dict):
+                extracted.append(part.get("text", ""))
+            elif isinstance(part, str):
+                extracted.append(part)
+        return "".join(extracted).strip()
+    return str(value).strip()
+
 # Workflow Nodes
 def categorize_experience(state: State) -> State:
     prompt = ChatPromptTemplate.from_template(
@@ -30,7 +44,8 @@ def categorize_experience(state: State) -> State:
         "Application : {application}"
     )
     chain = prompt | llm
-    experience_level = chain.invoke({"application": state["application"]}).content
+    raw_response = chain.invoke({"application": state["application"]}).content
+    experience_level = clean_model_output(raw_response)
     return {"experience_level": experience_level}
 
 def assess_skillset(state: State) -> State:
@@ -40,7 +55,8 @@ def assess_skillset(state: State) -> State:
         "Application : {application}"
     )
     chain = prompt | llm
-    skill_match = chain.invoke({"application": state["application"]}).content
+    raw_response = chain.invoke({"application": state["application"]}).content
+    skill_match = clean_model_output(raw_response)
     return {"skill_match": skill_match}
 
 def schedule_hr_interview(state: State) -> State:
@@ -54,10 +70,17 @@ def reject_application(state: State) -> State:
 
 # Routing Logic
 def route_app(state: State) -> str:
-    if state["skill_match"] == "Match":
+    # Clean and standardize values for comparisons
+    skills = state["skill_match"].lower()
+    experience = state["experience_level"].lower()
+    
+    if "no match" in skills:
+        if "senior" in experience:
+            return "escalate_to_recruiter"
+        else:
+            return "reject_application"
+    elif "match" in skills:
         return "schedule_hr_interview"
-    elif state["experience_level"] == "Senior-level":
-        return "escalate_to_recruiter"
     else:
         return "reject_application"
 
@@ -79,21 +102,13 @@ workflow.add_edge("schedule_hr_interview", END)
 app = workflow.compile()
 
 def screen_candidate_ui(application_text):
-    try:
+    try: 
         results = app.invoke({"application": application_text})
         
-        exp_lvl = results.get('experience_level', '')
-        if isinstance(exp_lvl, list):
-            exp_lvl = "".join(part.get("text", "") for part in exp_lvl if isinstance(part, dict))
-            
-        sk_match = results.get('skill_match', '')
-        if isinstance(sk_match, list):
-            sk_match = "".join(part.get("text", "") for part in sk_match if isinstance(part, dict))
-            
-        resp = results.get('response', '')
-        if isinstance(resp, list):
-            resp = "".join(part.get("text", "") for part in resp if isinstance(part, dict))
-            
+        exp_lvl = clean_model_output(results.get('experience_level', ''))
+        sk_match = clean_model_output(results.get('skill_match', ''))
+        resp = clean_model_output(results.get('response', ''))
+        
         return exp_lvl, sk_match, resp
     except Exception as e:
         return f"Error: {str(e)}", "Error", "Error"
