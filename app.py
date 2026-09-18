@@ -23,7 +23,7 @@ class State(TypedDict):
     skill_match: str
     response: str
 
-# Helper function to clean text from complex model outputs
+# Helper function to extract clean text from any structured or list outputs
 def clean_model_output(value):
     if not value:
         return ""
@@ -34,8 +34,8 @@ def clean_model_output(value):
                 extracted.append(part.get("text", ""))
             elif isinstance(part, str):
                 extracted.append(part)
-        return "".join(extracted).strip()
-    return str(value).strip()
+        value = "".join(extracted)
+    return str(value).replace("**", "").strip()
 
 # Workflow Nodes
 def categorize_experience(state: State) -> State:
@@ -68,12 +68,12 @@ def escalate_to_recruiter(state: State) -> State:
 def reject_application(state: State) -> State:
     return {"response": "Candidate doesn't meet JD and has been rejected."}
 
-# Routing Logic
+# Routing Logic with Robust Substring Comparisons
 def route_app(state: State) -> str:
-    # Clean and standardize values for comparisons
     skills = state["skill_match"].lower()
     experience = state["experience_level"].lower()
     
+    # Check if 'no match' is explicitly specified first
     if "no match" in skills:
         if "senior" in experience:
             return "escalate_to_recruiter"
@@ -82,6 +82,9 @@ def route_app(state: State) -> str:
     elif "match" in skills:
         return "schedule_hr_interview"
     else:
+        # Default fallback
+        if "senior" in experience:
+            return "escalate_to_recruiter"
         return "reject_application"
 
 # Assemble LangGraph Workflow
